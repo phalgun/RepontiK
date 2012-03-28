@@ -10,6 +10,7 @@ include_directories(
   ${QT_INCLUDES}
   ${KDE4_INCLUDES}
   ${SOPRANO_INCLUDE_DIR}
+  ${NEPOMUK_INCLUDE_DIR}
   ${CMAKE_SOURCE_DIR}
   ${NEPOMUK_INCLUDE_DIR}
   )
@@ -35,11 +36,10 @@ target_link_libraries( resourcebrowser
   ${NEPOMUK_LIBRARIES}
   ${NEPOMUK_QUERY_LIBRARIES}
   ${SOPRANO_LIBRARIES}
-  ${NEPOMUKEXTRAS_INCLUDE_DIR}	
   )
-
 install(TARGETS resourcebrowser
 	${INSTALL_TARGETS_DEFAULT_ARGS})
+
 #install(FILES resourcebrowser.desktop DESTINATION ${SERVICES_INSTALL_DIR})
 
 #install(PROGRAMS resourcebrowser.desktop DESTINATION ${XDG_APPS_INSTALL_DIR})
