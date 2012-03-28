@@ -1,7 +1,7 @@
 /*
   ***************************************************************************
-  *   Copyright (C) 2011 by Phaneendra Hegde <phaneendra.hegde@gmail.com>   *
-  *                                                                         *
+  *   Copyright (C) 2011 by Phaneendra Hegde <phaneendra.hegde.gmail.com    *
+  *                         Phalgun G <phalgun.guduthur@gmail.com>          *
   *   This program is free software; you can redistribute it and/or modify  *
   *   it under the terms of the GNU General Public License as published by  *
   *   the Free Software Foundation; either version 2 of the License, or     *
@@ -34,6 +34,7 @@
 #include <KDialog>
 #include <KMenu>
 #include <KPropertiesDialog>
+#include <KFileItemActions>
 
 //Qt includes
 #include <QMessageBox>
@@ -50,6 +51,8 @@
 #include <QSize>
 #include <QFile>
 #include <QIODevice>
+#include <QTextStream>
+#include <QHash>
 
 //Nepomuk Includes
 #include <Nepomuk/ResourceManager>
@@ -70,12 +73,12 @@
 #include <Nepomuk/Variant>
 #include <Nepomuk/Tag>
 #include <Nepomuk/Utils/FacetWidget>
+#include <Nepomuk/File>
 
 //Soprano includes
 #include <Soprano/QueryResultIterator>
 #include <Soprano/Model>
 #include <Soprano/Vocabulary/NAO>
-
 
 
 ResourceBrowser::ResourceBrowser() :
@@ -136,15 +139,16 @@ void ResourceBrowser::setupDockWidgets()
     m_removeDuplicateButton->setText(i18n("Remove Duplicates"));
     m_removeDuplicateButton->setFlat(true);
     connect(m_removeDuplicateButton, SIGNAL(clicked()), this, SLOT(slotRemoveDuplicates()));
-    m_automaticTopicButton = new QPushButton( buttonWidget );
-    m_automaticTopicButton->setIcon( KIcon("nepomuk") );
-    m_automaticTopicButton->setText( i18n("Automatic Tagging") );
-    m_automaticTopicButton->setEnabled( true );
-    m_automaticTopicButton->setFlat( true );
-    connect(m_automaticTopicButton, SIGNAL(clicked()), this, SLOT(slotAutomaticTopicSet()));
+
+    m_autoTopicButton = new QPushButton(buttonWidget);
+    m_autoTopicButton->setIcon(KIcon("nepomuk"));
+    m_autoTopicButton->setText(i18n("Automatic Topic"));
+    m_autoTopicButton->setFlat(true);
+    connect(m_autoTopicButton, SIGNAL(clicked()), this, SLOT(slotAutomaticTopic()));
+
     buttonLayout->addWidget(m_manualLinkResourceButton);
     buttonLayout->addWidget(m_removeDuplicateButton);
-    buttonLayout->addWidget( m_automaticTopicButton );
+    buttonLayout->addWidget(m_autoTopicButton);
     dock->setWidget(buttonWidget);
     dock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     addDockWidget(Qt::LeftDockWidgetArea,dock);
@@ -170,23 +174,16 @@ void ResourceBrowser::buildCentralUI()
     m_mainWidget = new QWidget(this);
     QVBoxLayout *gLayout = new QVBoxLayout(m_mainWidget);
     m_mainWidget->setLayout(gLayout);
-    QHBoxLayout *hLayout = new QHBoxLayout(m_mainWidget);
     m_searchBox = new KLineEdit(m_mainWidget);
     m_searchBox->setClearButtonShown(true);
     m_searchBox->setPlaceholderText(i18n("Search for resources"));
     connect(m_searchBox,SIGNAL(textChanged(QString)),this,SLOT(slotTriggerSearch(QString)));
     m_resourceView = new QListView(m_mainWidget);
     m_resourceView->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_resourceView->setViewMode(m_resourceView->IconMode);
+    m_resourceView->setViewMode(m_resourceView->ListMode);
     m_resourceView->setIconSize(QSize(42,42));
     m_resourceView->setUniformItemSizes(true);
-    m_resourceSelect = new QComboBox(m_mainWidget);
-    QStringList rList;
-    rList << i18n("All Resources") << i18n("Movies") << i18n("Music") << i18n("Image") << i18n("Documents") << i18n("Contacts");
-    m_resourceSelect->addItems( rList );
-    hLayout->addWidget(m_resourceSelect);
-    hLayout->addWidget(m_searchBox);
-    gLayout->addLayout(hLayout);
+    gLayout->addWidget(m_searchBox);
     m_resourceView->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_resourceView,SIGNAL(customContextMenuRequested(QPoint)),this,SLOT(slotResourceContextMenu(QPoint)));
     connect(m_resourceView,SIGNAL(doubleClicked(QModelIndex)),this,SLOT(slotOpenResource(QModelIndex)));
@@ -220,9 +217,6 @@ void ResourceBrowser::setupActions()
     m_unlinkAction = new KAction(this);
     m_unlinkAction->setText(i18n("&Unlink resource"));
     m_unlinkAction->setIcon(KIcon("edit-delete"));
-    m_deleteAction = new KAction( this );
-    m_deleteAction->setText( i18n(" &Delete Resource") );
-    m_deleteAction->setIcon( KIcon("edit-delete"));
 }
 
 
@@ -295,28 +289,30 @@ void ResourceBrowser::slotLinkedResources()
 
 void ResourceBrowser::slotRecommendedResources()
 {
-
     Nepomuk::Resource resource = m_resourceViewModel->resourceForIndex(m_resourceView->selectionModel()->currentIndex() );
-    if(!resource.label().isEmpty() || !resource.genericLabel().isEmpty()) {
-        QList<Nepomuk::Resource> recommendations;
+    QList<Nepomuk::Resource> recommendations;
 
-        Q_FOREACH( const Nepomuk::Resource topic, resource.topics()) {
-            qDebug() << topic;
-            Nepomuk::Query::ComparisonTerm term( Nepomuk::Vocabulary::PIMO::Topic(),
-                                                 Nepomuk::Query::ResourceTerm(topic) );
-            Nepomuk::Query::Query query( term );
-            QList<Nepomuk::Query::Result> results = Nepomuk::Query::QueryServiceClient::syncQuery( query );
-            Q_FOREACH(Nepomuk::Query::Result rsc, results) {
-                recommendations.append(rsc.resource());
-            }
+    if(!(resource.label().isEmpty() && resource.genericLabel().isEmpty())) {
+        if (!resource.topics().empty()) {
+            recommendations = topicResourceSearch(resource);
+            qDebug()<<recommendations;
+        }
+        qDebug()<<"length :"<<recommendations.length();
+        if (recommendations.length() < 10 && !resource.label().isEmpty()) {
+            qDebug()<<"less than 10";
+            recommendations.append(contentResourceSearch(resource.label()));
+            qDebug()<<recommendations;
         }
 
-        recommendations.append(contentResourceSearch(resource.genericLabel()));
-        recommendations.append(contentResourceSearch(resource.label()));
+        if (recommendations.length() < 10 && !resource.genericLabel().isEmpty()) {
+            qDebug()<<"less than 10";
+            recommendations.append(contentResourceSearch(resource.genericLabel()));
+            qDebug()<<recommendations;
+        }
 
         m_recommendationViewModel->setResources(recommendations);
-
     }
+    else qDebug()<<"label empty";
 }
 
 
@@ -364,15 +360,31 @@ void ResourceBrowser::slotResourceContextMenu(const QPoint &pos)
     m_propertyAction = new KAction(this);
     m_propertyAction->setText(i18n("&Properties "));
     m_propertyAction->setIcon(KIcon("documentinfo"));
-    connect( m_propertyAction, SIGNAL(triggered()), this, SLOT(slotEmitResourceProperty()));
-    connect( m_deleteAction, SIGNAL(triggered()), this, SLOT(slotDeleteResource()) );
-    QMenu myMenu;
+    connect(m_propertyAction,SIGNAL(triggered()),this,SLOT(slotEmitResourceProperty()));
+    m_deleteResourceAction = new KAction( this );
+    m_deleteResourceAction->setText( i18n( "&Delete Resource" ) );
+    m_deleteResourceAction->setIcon( KIcon( "edit-delete" ) );
+    connect(m_deleteResourceAction,SIGNAL(triggered()), this, SLOT(slotDeleteResource()));
+    QMenu bodyContextMenu;
     QPoint globalPos = m_resourceView->mapToGlobal(pos);
-    myMenu.addAction(m_propertyAction);
-    myMenu.addAction(m_deleteAction);
-    myMenu.exec(globalPos);
+    bodyContextMenu.addAction(m_propertyAction);
+    bodyContextMenu.addAction( m_deleteResourceAction );
+    bodyContextMenu.exec(globalPos);
 }
 
+void ResourceBrowser::slotDeleteResource()
+{
+    Nepomuk::Resource resourceToBeDeleted = m_resourceViewModel->resourceForIndex(
+                m_resourceView->selectionModel()->currentIndex());
+    if( resourceToBeDeleted.isFile() ) {
+        QString fileTobeDeleted = "rm "+(resourceToBeDeleted.toFile()).url().path();
+        system(fileTobeDeleted.toLocal8Bit().data());
+    }
+    else {
+        resourceToBeDeleted.remove();
+    }
+
+}
 
 void ResourceBrowser::slotRecommendedResourceContextMenu(const QPoint &pos)
 {
@@ -458,40 +470,22 @@ void ResourceBrowser::slotRemoveDuplicates()
     duplicates->exec();
 }
 
-void ResourceBrowser::slotDeleteResource()
-{
-    QMessageBox msgBox;
-    msgBox.setText("Alert");
-    msgBox.setInformativeText("Do you really want to delete this resource? ");
-    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No );
-    msgBox.setDefaultButton(QMessageBox::No);
-    msgBox.setIcon(QMessageBox::Warning);
-    int ret = msgBox.exec();
-    if(ret == QMessageBox::Yes) {
-        qDebug()<<m_resourceViewModel->resourceForIndex(m_resourceView->selectionModel()->currentIndex()).label();
-        m_resourceViewModel->resourceForIndex(m_resourceView->selectionModel()->currentIndex()).remove();
-        //populateDefaultResources();
-        //TODO:: Populate pervious resource list, Not the default one
-        populatePreviousResourceList();
-    }
-}
-
-void ResourceBrowser::slotAutomaticTopicSet()
+void ResourceBrowser::slotAutomaticTopic()
 {
     QFile fileSW("/home/nokia-pg/kde/src/resourcebrowser/stopwords.txt");
-    QFile fileDict("/home/nokia-pg/kde/src/resourcebrowser/corncob_lowercase.txt");
+    QFile fileDict("/home/nokia-pg/kde/src/resourcebrowser/dictionary.txt");
 
     if (!fileSW.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qDebug()<<"Can't open stopword file";
+        qDebug()<<"Can't open stopword list,exiting";
+        return;
     }
 
-
     if (!fileDict.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qDebug()<<"Can't open dictionary";
+        qDebug()<<"Can't open dictionary,exiting";
+        return;
     }
 
     QStringList list,stopwords,dictionary;
-    QHash<QString,int>hash;
 
     QTextStream sw(&fileSW);
     while(!sw.atEnd()) {
@@ -507,40 +501,32 @@ void ResourceBrowser::slotAutomaticTopicSet()
 
     Nepomuk::Query::Query query;
     query.setLimit(10);
-    Nepomuk::Query::Term term;
-    term = Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::NFO::TextDocument()) ||
+    Nepomuk::Query::Term termA,termB;
+    termA = Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::NFO::TextDocument()) ||
             Nepomuk::Query::ComparisonTerm(Nepomuk::Vocabulary::NIE::mimeType(),
                                            Nepomuk::Query::LiteralTerm(QLatin1String("text/plain")));
+
+    termB = Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::NFO::PaginatedTextDocument());
+    Nepomuk::Query::OrTerm term(termA,termB);
     query.setTerm(term);
     QList<Nepomuk::Query::Result>results = Nepomuk::Query::QueryServiceClient::syncQuery( query );
 
-
-
+    //for each plain text document
     Q_FOREACH( const Nepomuk::Query::Result& result, results ) {
-        if(result.resource().topics().length() <=3 ) {
+        if(result.resource().topics().length() <= 3) {
             Nepomuk::Variant v = result.resource().property(Nepomuk::Vocabulary::NIE::plainTextContent());
-
             QString line = v.toString();
             list = line.split(" ");
-            qDebug()<<"asdf"<<result.resource();
+            QHash<QString,int>hash;
             foreach(QString str,list) {
-                // add a check to see if word is present in dictionary, if not ignore!
-
-
-                if(!stopwords.contains(str)) {
+                if(!stopwords.contains(str,Qt::CaseInsensitive) && dictionary.contains(str,Qt::CaseInsensitive)) {
                     if(hash.value(str)) {
                         hash[str] = hash[str]+1;
-                        qDebug()<<"in if";
                     }
-                    else
+                    else {
                         hash[str] = 1;
+                    }
                 }
-
-            }
-
-            QHashIterator<QString, int> l(hash);
-            while (l.hasNext()) {
-                l.next();
             }
 
             QList<int> vals = hash.values();
@@ -548,21 +534,31 @@ void ResourceBrowser::slotAutomaticTopicSet()
             vals= set.toList();
             qSort(vals);
             QStringList string;
-            while(string.length()<5) {
-                string = string+hash.keys(vals.last());
-                vals.removeLast();
-            }
-            qDebug()<<string << "File name:->>>>" << result.resource().genericLabel();
+            int totalTopics = 0;
 
-            for(int i=0;i<3;i++) {
+            if (vals.length() > 0)
+                do {
+                // 'keys' is used instead of 'key' because, there maybe
+                // multiple keywords with same frequency
+                // and we don't want to ignore all of them
+                string = string+hash.keys(vals.last());
+                totalTopics = totalTopics + string.length();
+                vals.removeLast();
+
+            } while(string.length()<5 && string.length()>0 && vals.length()>0);
+
+            qDebug()<<string << "File name:->>>>" << result.resource();
+
+            for(int i=0;i<totalTopics;i++) {
                 Nepomuk::Resource topic(string[i]);
                 topic.addType(Nepomuk::Vocabulary::PIMO::Topic());
                 result.resource().addTopic(topic);
+                qDebug()<<"topic added : "<<topic<<"to "<< result.resource().genericLabel();
             }
         }
     }
-}
 
+}
 
 void ResourceBrowser::populateDefaultResources()
 {
@@ -571,6 +567,7 @@ void ResourceBrowser::populateDefaultResources()
     m_currentQuery.setTerm(term);
     m_currentQuery = m_currentQuery || Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::PIMO::Person() );
     m_currentQuery = m_currentQuery || Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::NFO::PaginatedTextDocument() );
+    m_currentQuery = m_currentQuery || Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::NFO::Presentation() );
     m_currentQuery.setLimit( 35 );
     QList<Nepomuk::Query::Result> results = Nepomuk::Query::QueryServiceClient::syncQuery( m_currentQuery );
     QList<Nepomuk::Resource> resources;
@@ -599,9 +596,6 @@ void ResourceBrowser::addIconToResource(Nepomuk::Resource rsc)
     else if(rsc.className().compare("Audio") == 0) {
         rsc.addSymbol("audio-basic");
     }
-    else if(rsc.className().compare("Video") == 0) {
-        rsc.addSymbol("video-x-generic");
-    }
     else if(rsc.className().compare("InformationElement") == 0) {
         rsc.addSymbol("video-x-generic");
     }
@@ -612,7 +606,7 @@ void ResourceBrowser::addIconToResource(Nepomuk::Resource rsc)
         rsc.addSymbol("application-pdf");
     }
     else if(rsc.className().compare("Archive") == 0) {
-        rsc.addSymbol("application-x-compressed");
+        rsc.addSymbol("application-x-archive");
     }
     else if(rsc.className().compare("Person") == 0){
         rsc.addSymbol("user-identity");
@@ -682,35 +676,35 @@ QList<Nepomuk::Resource> ResourceBrowser::nameResourceSearch(const QString str)
 QList<Nepomuk::Resource> ResourceBrowser:: typeResourceSearch(const QString str)
 {
     Nepomuk::Query::Term linkTerm;
-    //m_currentQuery.setLimit(50);
     if(str.contains("music") || str.contains("songs") || str.contains("audio")) {
         linkTerm =  Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::NFO::Audio()) ||
                 Nepomuk::Query::ComparisonTerm(Nepomuk::Vocabulary::NIE::mimeType(),
                                                Nepomuk::Query::LiteralTerm(QLatin1String("audio")));
     }
-    else if(str.contains("video") || str.contains("movie")) {
+    else if(str.contains("tv show") || str.contains("movie") || str.contains("video")){
         linkTerm =  Nepomuk::Query::ResourceTypeTerm(Nepomuk::Vocabulary::NFO::Video()) ||
                 Nepomuk::Query::ComparisonTerm(Nepomuk::Vocabulary::NIE::mimeType(),
                                                Nepomuk::Query::LiteralTerm(QLatin1String("video")));
     }
     else if(str.contains("photo") || str.contains("picture") || str.contains("image")) {
+        qDebug()<<"Found";
         linkTerm =  Nepomuk::Query::ResourceTypeTerm( Nepomuk::Vocabulary::NFO::Image() );
     }
     else if(str.contains("archive") || str.contains("compressed") ) {
+        qDebug()<<"Found";
         linkTerm =  Nepomuk::Query::ResourceTypeTerm( Nepomuk::Vocabulary::NFO::Archive() );
     }
     else if(str.contains("pdf")) {
+        qDebug()<<"Found";
         linkTerm =  Nepomuk::Query::ResourceTypeTerm( Nepomuk::Vocabulary::NFO::PaginatedTextDocument() );
     }
     else if(str.contains("ppt") || str.contains("presentation")) {
+        qDebug()<<"Found";
         linkTerm =  Nepomuk::Query::ResourceTypeTerm( Nepomuk::Vocabulary::NFO::Presentation() );
     }
     else if(str.contains("text") || str.contains("txt") || str.contains("document") || str.contains("doc")  ) {
+        qDebug()<<"Found";
         linkTerm =  Nepomuk::Query::ResourceTypeTerm( Nepomuk::Vocabulary::NFO::Document() );
-    }
-    else if(str.contains("contact") || str.contains("person") ) {
-        m_currentQuery.setLimit(200);
-        linkTerm =  Nepomuk::Query::ResourceTypeTerm( Nepomuk::Vocabulary::NCO::PersonContact() );
     }
     else if(str.contains("java") ) {
         qDebug()<<"Found";
@@ -723,14 +717,9 @@ QList<Nepomuk::Resource> ResourceBrowser:: typeResourceSearch(const QString str)
 
     }
     m_currentQuery.setTerm(linkTerm);
+    m_currentQuery.setLimit(25);
     QList<Nepomuk::Query::Result>results = Nepomuk::Query::QueryServiceClient::syncQuery( m_currentQuery );
     QList<Nepomuk::Resource> resource;
-    if(results.length() > 30 ) {
-        m_resourceView->setViewMode(m_resourceView->ListMode);
-    }
-    else {
-        m_resourceView->setViewMode(m_resourceView->IconMode);
-    }
     Q_FOREACH( const Nepomuk::Query::Result& result, results ) {
         addIconToResource(result.resource());
         resource.append( result.resource() );
@@ -738,6 +727,46 @@ QList<Nepomuk::Resource> ResourceBrowser:: typeResourceSearch(const QString str)
     resourceSort(resource);
     return resource;
 }
+
+QList<Nepomuk::Resource> ResourceBrowser::topicResourceSearch(const Nepomuk::Resource resource)
+{
+    QHash<Nepomuk::Resource,int> hash;
+    QList<Nepomuk::Resource> recommendations;
+    qDebug()<<"topics :"<<resource.topics();
+    Q_FOREACH( const Nepomuk::Resource topic, resource.topics()) {
+        qDebug() << topic;
+        Nepomuk::Query::ComparisonTerm term( Nepomuk::Vocabulary::PIMO::Topic(),
+                                             Nepomuk::Query::ResourceTerm(topic) );
+        Nepomuk::Query::Query query( term );
+        QList<Nepomuk::Query::Result> results = Nepomuk::Query::QueryServiceClient::syncQuery( query );
+        Q_FOREACH(Nepomuk::Query::Result rsc, results) {
+            recommendations.append(rsc.resource());
+
+            if(hash.value(rsc.resource())) {
+                hash[rsc.resource()] = hash[rsc.resource()]+1;
+                qDebug()<<hash;
+            }
+            else {
+                hash[rsc.resource()] = 1;
+                qDebug()<<hash;
+            }
+        }
+
+        QList<int> vals = hash.values();
+        QSet<int>set = vals.toSet();
+        vals= set.toList();
+        qSort(vals);
+
+        while(recommendations.length()<25 && recommendations.length()>0) {
+            recommendations = recommendations+hash.keys(vals.last());
+            vals.removeLast();
+        }
+        qDebug()<<recommendations;
+
+    }
+    return recommendations;
+}
+
 void ResourceBrowser::updateLinkedResources()
 {
     Nepomuk::Resource resource = m_resourceViewModel->resourceForIndex(m_resourceView->selectionModel()->currentIndex() );
@@ -749,19 +778,5 @@ void ResourceBrowser::updateLinkedResources()
     }
 }
 
-void ResourceBrowser::populatePreviousResourceList()
-{
-    if(! m_currentQuery.isValid()) {
-        populateDefaultResources();
-    }
-    QList<Nepomuk::Query::Result>results = Nepomuk::Query::QueryServiceClient::syncQuery( m_currentQuery );
-    QList<Nepomuk::Resource> resource;
-    Q_FOREACH( const Nepomuk::Query::Result& result, results ) {
-        addIconToResource( result.resource() );
-        resource.append( result.resource() );
-    }
-    resourceSort(resource);
-    m_resourceViewModel->setResources(resource);
-}
 
 #include "resourcebrowser.moc"

@@ -1,7 +1,7 @@
 /*
   ***************************************************************************
   *   Copyright (C) 2011 by Phaneendra Hegde <phaneendra.hegde@gmail.com>   *
-  *                                                                         *
+  *                         Phalgun G <phalgun.guduthur@gmail.com>          *
   *   This program is free software; you can redistribute it and/or modify  *
   *   it under the terms of the GNU General Public License as published by  *
   *   the Free Software Foundation; either version 2 of the License, or     *
@@ -27,7 +27,6 @@
 #include <QPoint>
 #include <QPushButton>
 #include <QToolButton>
-#include <QComboBox>
 
 //KDE includes
 #include <KXmlGuiWindow>
@@ -56,11 +55,11 @@ private:
     QList<Nepomuk::Resource> contentResourceSearch( const QString str );
     QList<Nepomuk::Resource> nameResourceSearch( const QString str );
     QList<Nepomuk::Resource> typeResourceSearch( const QString str );
-    QList<Nepomuk::Resource> getTaggedResources( );
+    QList<Nepomuk::Resource> topicResourceSearch(const Nepomuk::Resource res);
     void resourceSort(QList<Nepomuk::Resource> &resources);
     void updateLinkedResources();
     void addIconToResource(Nepomuk::Resource);
-    void populatePreviousResourceList();
+  //  int split(int lower,int upper);
 signals:
     void sigShowProperties(KUrl);
 private slots:
@@ -82,8 +81,7 @@ private slots:
     void slotEmitLinkedResourceProperty();
     void slotRemoveDuplicates();
     void slotDeleteResource();
-    void slotAutomaticTopicSet();
-
+    void slotAutomaticTopic();
 private:
 
     QWidget* m_mainWidget;
@@ -92,16 +90,15 @@ private:
     QListView* m_linkedResourceView;
     QPushButton* m_manualLinkResourceButton;
     QPushButton* m_removeDuplicateButton;
-    QPushButton* m_automaticTopicButton;
+    QPushButton* m_autoTopicButton;
     QToolButton* m_resourceNameButton;
     QToolButton* m_resourceContentButton;
     QToolButton* m_resourceTypeButton;
-    QComboBox* m_resourceSelect;
 
     KLineEdit* m_searchBox;
     KAction *m_unlinkAction;
     KAction *m_propertyAction;
-    KAction *m_deleteAction;
+    KAction *m_deleteResourceAction;
 
     Nepomuk::Utils::SimpleResourceModel* m_resourceViewModel;
     Nepomuk::Utils::SimpleResourceModel* m_recommendationViewModel;
